@@ -14,7 +14,7 @@
 /* Wersja na komputer. Te same dane co w telefonie (ten sam Apps Script i ta sama tabela),
    ale osobna strona — wersja na telefon nie jest tu w ogóle zmieniana.
    Przy każdej zmianie podnieś PC_VER (komputer pokaże „Jest nowa wersja”). */
-const PC_VER = "9";
+const PC_VER = "10";
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx_l3IXdsc9yk0NrP27OX9__7Dij8gnpiuG3XyWeDsgG0oDVVVV7z911Y06SQ8cO7M8qQ/exec";
 </script>
 <style>
@@ -510,7 +510,7 @@ $("#stTbl").addEventListener("input",e=>{const s=e.target.closest("[data-spis]")
   d.textContent=diff===""?"":diff===0?"✓":sgn(diff);d.className="n"+(diff<0?" neg":"");spisInfo()});
 function spisInfo(){const n=spisVal.size,ch=[...spisVal].filter(([c,v])=>Number(v)!==stanOf(c)).length;
   $("#spisInfo").textContent=n?`Policzono ${n} produktów, ${ch} z różnicą`:"";$("#spisSave").disabled=!ch}
-$("#spisBtn").onclick=()=>{spis=true;renderStany();const f=$("[data-spis]");if(f)f.focus()};
+$("#spisBtn").onclick=()=>{spis=true;stSort.key="stan";stSort.dir="asc";renderStany();const f=$("[data-spis]");if(f)f.focus()};
 $("#spisCancel").onclick=()=>{if(spisVal.size&&!confirm("Porzucić wpisane ilości?"))return;spis=false;spisVal.clear();renderStany()};
 $("#spisSave").onclick=async()=>{
   const todo=[...spisVal].filter(([c,v])=>Number(v)>=0&&Number(v)!==stanOf(c));if(!todo.length)return;

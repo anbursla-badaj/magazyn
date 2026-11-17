@@ -16,7 +16,7 @@
 <script>
 /* Wersja aplikacji — przy każdej zmianie podnieś ją razem z CACHE w sw.js.
    Telefon porównuje ją z wersją na stronie i pokazuje „Jest nowa wersja”. */
-const APP_VER = "26";
+const APP_VER = "27";
 const JSQR_URL = "lib/jsQR.js";  // dekoder dla telefonów bez wbudowanego (iPhone)
 /* ====== USTAWIENIA — wklej tutaj swoje dane ====== */
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx_l3IXdsc9yk0NrP27OX9__7Dij8gnpiuG3XyWeDsgG0oDVVVV7z911Y06SQ8cO7M8qQ/exec";  // adres aplikacji internetowej z Apps Script (kończy się na /exec)
@@ -78,6 +78,17 @@ input:focus-visible,button:focus-visible,select:focus-visible{outline:3px solid 
 .code{font-family:var(--mono);font-size:13px;color:var(--muted);word-break:break-all}
 .lines{display:flex;flex-direction:column;gap:8px}
 .line{display:grid;grid-template-columns:88px 1fr 44px;gap:8px;align-items:center}
+.spistools{display:grid;grid-template-columns:1fr;gap:8px;margin-bottom:6px}
+.spisrow{display:grid;grid-template-columns:1fr 44px 84px;gap:8px;align-items:center;padding:10px 0;border-bottom:1px solid var(--line)}
+.spisrow .nm{font-weight:600;line-height:1.25}
+.spisrow .sub{font-size:13px;color:var(--muted)}
+.spisrow .sub b{font-family:var(--mono);color:var(--fg)}
+.spisrow .df{font-family:var(--mono);font-size:13px;font-weight:600}
+.spisrow .df.ok{color:var(--ok)}.spisrow .df.bad{color:var(--err)}
+.spisrow .eq{width:44px;height:44px;padding:0;border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:4px;font:600 20px var(--mono);cursor:pointer}
+.spisrow input{text-align:center;font-family:var(--mono);padding:10px 4px}
+.spisrow.done{background:linear-gradient(90deg,color-mix(in srgb,var(--ok) 9%,transparent),transparent)}
+.spisbar{position:sticky;bottom:0;background:var(--bg);padding:12px 0 calc(12px + env(safe-area-inset-bottom));display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--line);z-index:3}
 .addpp{display:grid;grid-template-columns:1fr auto;gap:8px}
 .defq{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .step{display:inline-flex;align-items:center;gap:4px}
@@ -325,6 +336,18 @@ nav .dot{position:absolute;top:6px;right:calc(50% - 30px);width:8px;height:8px;b
 
   <section id="v-stan" hidden>
     <h2>Stany</h2>
+    <button class="btn primary" id="spisOpen" style="width:100%;margin-bottom:12px">Inwentaryzacja — policz wszystko</button>
+    <div id="spisView" hidden>
+      <div class="item-head"><div class="label">Inwentaryzacja</div><button class="btn ghost" id="spisClose" aria-label="Zamknij">✕</button></div>
+      <div class="note" style="margin-bottom:10px">Policz, ile leży na półce, i wpisz liczbę. „=” wpisuje stan z aplikacji (zgadza się). Puste pola są pomijane, zapisują się tylko różnice.</div>
+      <div class="spistools"><select id="spisSort" aria-label="Sortowanie">
+        <option value="stan-asc">Stan: od najmniejszego</option><option value="stan-desc">Stan: od największego</option>
+        <option value="name-asc">Nazwa: A → Z</option><option value="name-desc">Nazwa: Z → A</option><option value="todo">Najpierw niepoliczone</option></select>
+        <input id="spisSearch" type="search" placeholder="Szukaj produktu" autocomplete="off"></div>
+      <div id="spisList"></div>
+      <div class="spisbar"><span id="spisInfo" class="note"></span><button class="btn primary big" id="spisSave" disabled>Zapisz spis</button></div>
+    </div>
+    <div id="stanMain">
     <div style="display:flex;flex-direction:column;gap:10px">
       <div class="kpis" id="sKpi"></div>
       <div class="seg" id="sFilter">
@@ -336,6 +359,7 @@ nav .dot{position:absolute;top:6px;right:calc(50% - 30px);width:8px;height:8px;b
     <div id="stanList" style="margin-top:8px"></div>
     <div class="row" style="margin-top:16px"><button class="btn" id="stanCsv">Pobierz stany do Excela</button></div>
     <p class="note">Stan = przyjęcia − wydania ± inwentaryzacja. Kliknij „min”, żeby ustawić minimalny stan — poniżej niego produkt trafia do „Do zamówienia”.</p>
+    </div>
   </section>
 
   <section id="v-fakt" hidden>
@@ -819,7 +843,47 @@ function renderItemStats(){
 /* stany magazynowe */
 let sFilter="all";
 const isLow=i=>i.min>0&&stanOf(i.code)<i.min;
-function renderStany(){if(keepOpen($("#stanList")))return;
+/* ===== Inwentaryzacja: wszystkie produkty naraz ===== */
+const spisVal=new Map();let spisSort=ls.get("mqr_spis_sort")||"stan-asc";$("#spisSort").value=spisSort;
+function spisRow(i){const st=stanOf(i.code),v=spisVal.get(i.code)??"",d=v===""?null:Number(v)-st;
+  return `<div class="spisrow${v!==""?" done":""}" data-c="${esc(i.code)}"><div><div class="nm">${esc(i.name)}</div>
+    <div class="sub">w aplikacji <b>${fmtQ(st)}</b> szt.${d===null?"":` · <span class="df ${d===0?"ok":"bad"}">${d===0?"zgadza się ✓":sgn(d)}</span>`}</div></div>
+    <button class="eq" data-eq aria-label="Zgadza się: ${fmtQ(st)}">=</button>
+    <input type="number" inputmode="numeric" min="0" data-cnt value="${esc(v)}" placeholder="—" aria-label="Policzono: ${esc(i.name)}"></div>`}
+function renderSpis(){if($("#spisView").hidden)return;const a=document.activeElement;if(refreshing&&a&&a.closest&&a.closest("#spisList"))return;
+  const q=$("#spisSearch").value.trim().toLowerCase(),[k,dir]=spisSort.split("-"),m=dir==="desc"?-1:1;
+  const l=items.filter(i=>!q||i.name.toLowerCase().includes(q)||i.code.toLowerCase().includes(q)).sort((x,y)=>
+    spisSort==="todo"?(spisVal.has(x.code)-spisVal.has(y.code))||stanOf(x.code)-stanOf(y.code)
+    :k==="stan"?(stanOf(x.code)-stanOf(y.code))*m||x.name.localeCompare(y.name,"pl"):x.name.localeCompare(y.name,"pl")*m);
+  $("#spisList").innerHTML=l.length?l.map(spisRow).join(""):`<div class="empty">Nic nie pasuje.</div>`;spisInfo()}
+function spisInfo(){const n=spisVal.size,ch=[...spisVal].filter(([c,v])=>Number(v)!==stanOf(c)).length;
+  $("#spisInfo").textContent=n?`Policzono ${n} z ${items.length} · z różnicą: ${ch}`:`Do policzenia: ${items.length} produktów`;
+  $("#spisSave").disabled=!n;$("#spisSave").textContent=ch?`Zapisz spis (${ch} ${ch===1?"korekta":ch<5?"korekty":"korekt"})`:n?"Zapisz spis (wszystko się zgadza)":"Zapisz spis"}
+function spisUpd(row){const c=row.dataset.c,i=items.find(x=>x.code===c);if(!i)return;const tmp=document.createElement("div");tmp.innerHTML=spisRow(i);
+  row.className=tmp.firstElementChild.className;row.querySelector(".sub").innerHTML=tmp.querySelector(".sub").innerHTML;spisInfo()}
+$("#spisOpen").onclick=()=>{$("#spisView").hidden=false;$("#stanMain").hidden=true;$("#spisOpen").hidden=true;renderSpis()};
+function closeSpis(){$("#spisView").hidden=true;$("#stanMain").hidden=false;$("#spisOpen").hidden=false;spisVal.clear();$("#spisSearch").value=""}
+$("#spisClose").onclick=()=>{if(spisVal.size&&!confirm("Zamknąć? Wpisane ilości nie zostaną zapisane."))return;closeSpis()};
+$("#spisSort").onchange=()=>{spisSort=$("#spisSort").value;ls.set("mqr_spis_sort",spisSort);renderSpis()};
+$("#spisSearch").oninput=renderSpis;
+$("#spisList").addEventListener("input",e=>{if(e.target.dataset.cnt===undefined)return;const row=e.target.closest(".spisrow"),v=e.target.value.trim();
+  v===""?spisVal.delete(row.dataset.c):spisVal.set(row.dataset.c,v);spisUpd(row)});
+$("#spisList").addEventListener("click",e=>{if(!e.target.closest("[data-eq]"))return;const row=e.target.closest(".spisrow"),st=stanOf(row.dataset.c);
+  row.querySelector("[data-cnt]").value=st;spisVal.set(row.dataset.c,String(st));spisUpd(row)});
+$("#spisList").addEventListener("keydown",e=>{if(e.key!=="Enter"||e.target.dataset.cnt===undefined)return;e.preventDefault();
+  const all=[...$("#spisList").querySelectorAll("[data-cnt]")],n=all[all.indexOf(e.target)+1];n?n.focus():e.target.blur()});
+$("#spisSave").onclick=async()=>{if(!me){toast("Najpierw ustaw swoje imię (u góry)",true);$("#who").click();return}
+  const bad=[...spisVal].find(([c,v])=>!(Number(v)>=0)||Number(v)!==Math.round(Number(v)));if(bad)return toast("Ilość musi być liczbą całkowitą (0 lub więcej)",true);
+  const todo=[...spisVal].filter(([c,v])=>Number(v)!==stanOf(c)),same=spisVal.size-todo.length,b=$("#spisSave");
+  if(!todo.length){toast(`Wszystko się zgadza ✓ (${same} produktów)`);closeSpis();return}
+  b.disabled=true;let ok=0;const fails=[];
+  for(const[c,v]of todo){b.textContent=`Zapisuję ${ok+fails.length+1} z ${todo.length}…`;const it=items.find(x=>x.code===c);
+    try{await post({action:"inventory",code:c,name:it?it.name:c,by:me,counted:Number(v)});ok++;spisVal.delete(c)}catch(err){fails.push((it?it.name:c)+": "+err.message)}}
+  if(fails.length){toast(`Zapisano ${ok}, nie udało się: ${fails.join("; ")}`,true);b.disabled=false;spisInfo()}
+  else{toast(`Spis zapisany: ${ok} ${ok===1?"korekta":ok<5?"korekty":"korekt"}${same?`, ${same} się zgadza`:""}`);closeSpis()}
+  await loadEntries()};
+
+function renderStany(){renderSpis();if(keepOpen($("#stanList")))return;
   const low=items.filter(isLow);$("#lowDot").hidden=!low.length;
   $("#sKpi").innerHTML=`<div class="kpi"><b>${fmtQ(items.length)}</b><span>produktów</span></div><div class="kpi"><b class="${low.length?"neg":""}">${fmtQ(low.length)}</b><span>do zamówienia</span></div><div class="kpi"><b>${fmtQ(items.reduce((a,i)=>a+Math.max(0,stanOf(i.code)),0))}</b><span>sztuk razem</span></div>`;
   const q=$("#sSearch").value.trim().toLowerCase();
