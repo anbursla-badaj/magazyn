@@ -14,7 +14,7 @@
 /* Wersja na komputer. Te same dane co w telefonie (ten sam Apps Script i ta sama tabela),
    ale osobna strona — wersja na telefon nie jest tu w ogóle zmieniana.
    Przy każdej zmianie podnieś PC_VER (komputer pokaże „Jest nowa wersja”). */
-const PC_VER = "8";
+const PC_VER = "9";
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx_l3IXdsc9yk0NrP27OX9__7Dij8gnpiuG3XyWeDsgG0oDVVVV7z911Y06SQ8cO7M8qQ/exec";
 </script>
 <style>
@@ -109,6 +109,16 @@ tr.low td{background:var(--warn-bg)}
 .ops{max-width:880px}
 .oprow{display:grid;grid-template-columns:1fr 100px 220px 130px 36px;gap:8px;align-items:center;margin-bottom:6px}
 .oprow.rec{grid-template-columns:1fr 110px 90px 36px}
+.iblk{border:1px solid var(--line);border-radius:6px;padding:12px;margin-bottom:10px;display:flex;flex-direction:column;gap:8px}
+.ihead{display:flex;gap:8px;align-items:center}.ihead input{flex:1;font-weight:600}
+.iadd{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.iadd [data-bf=add]{flex:1;min-width:260px}
+.step{display:inline-flex;align-items:center;gap:3px}
+.step button{width:30px;height:32px;border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:4px;font-size:17px;cursor:pointer;line-height:1}
+.step button:hover{border-color:var(--muted)}
+.step input{width:58px;text-align:center;padding:5px 4px}
+.irows{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:6px}
+.irow{display:flex;align-items:center;gap:8px;background:var(--soft);border-radius:5px;padding:5px 6px 5px 10px}
+.irow .ipp{flex:1;font-variant-numeric:tabular-nums}
 .oprow .st .multi{color:var(--fg);font-weight:600}
 .oprow .st{font-size:12.5px;color:var(--muted);text-align:right}
 .ophead{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:4px}
@@ -235,9 +245,10 @@ tr.sel td{background:color-mix(in srgb,var(--accent) 18%,var(--surface))}
           <label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" id="opToday" checked> dzisiejsza data</label>
           <input type="date" id="opDate" hidden></span></div>
         <div class="note" style="margin-top:4px">Z numerem faktury wydania będą z niej schodzić automatycznie (najstarsza faktura najpierw).</div></div>
+      <div id="issBlocks" hidden></div>
       <div id="opHead"></div>
       <div id="opRows"></div>
-      <div class="bar" style="margin:10px 0 0"><button class="btn" id="opAdd">+ Wiersz</button><span class="note grow">Enter w ostatnim polu dodaje nowy wiersz. Produkt możesz wpisać nazwą albo kodem. Kilka PP w jednym wierszu (np. <b>1468, 1469, 1470</b>) — ilość pójdzie na każde PP.</span>
+      <div class="bar" style="margin:10px 0 0"><button class="btn" id="opAdd">+ Wiersz</button><span class="note grow" id="opNote"></span>
         <span id="opSum" class="note"></span><button class="btn primary" id="opSave">Zapisz</button></div>
     </div>
   </div>
@@ -521,6 +532,10 @@ $("#stPrint").onclick=()=>{const l=stList();
 let opMode="W",opRows=[{p:"",q:"",pp:""}];
 function setSeg(sel,attr,val){$$(sel+" button").forEach(b=>b.setAttribute("aria-pressed",b.dataset[attr]===val))}
 function renderOps(focusLast){
+  const W=opMode==="W";$("#issBlocks").hidden=!W;$("#opHead").hidden=W;$("#opRows").hidden=W;
+  $("#opAdd").textContent=W?"+ Kolejny produkt":"+ Wiersz";
+  $("#opNote").innerHTML=W?"Wybierz produkt, potem wpisuj numery PP i Enter — każdy PP dostaje domyślną ilość, zmienisz ją przyciskami − / +. Skrót: <b>1470x3</b> = 3 szt. na PP 1470.":"Enter w ostatnim polu dodaje nowy wiersz. Produkt możesz wpisać nazwą albo kodem.";
+  if(W){$("#opDoc").hidden=true;renderIss(focusLast);return}
   $("#opDoc").hidden=opMode!=="P";
   const rec=opMode==="P";
   $("#opHead").innerHTML=`<div class="oprow ophead${rec?" rec":""}"><span>Produkt</span><span>Ilość</span>${rec?"":"<span>PP</span>"}<span style="text-align:right">Na stanie</span><span></span></div>`;
@@ -535,11 +550,72 @@ const parsePPs=v=>[...new Set(String(v||"").split(/[\s,;]+/).map(x=>x.trim()).fi
 function stText(r,it){const n=opMode==="W"?parsePPs(r.pp).length:0;
   return (n>1?`<b class="multi">×${n} PP = ${fmtQ((Number(r.q)||0)*n)} szt.</b><br>`:"")+(it?fmtQ(stanOf(it.code))+" szt.":"")}
 function fillProdList(){$("#prodList").innerHTML=items.map(i=>`<option value="${esc(i.name)}">${esc(i.code)}</option>`).join("")}
-function renderOpsAux(){fillProdList();
+function renderOpsAux(){fillProdList();if(opMode==="W"){issStocks();return}
   $$("#opRows .oprow").forEach(row=>{const r=opRows[row.dataset.i];row.querySelector("[data-st]").innerHTML=stText(r,findItem(r.p))})}
-function opSum(){const ok=opRows.filter(r=>findItem(r.p)&&Number(r.q)>0),mult=r=>opMode==="W"?Math.max(1,parsePPs(r.pp).length):1;
+function opSum(){if(opMode==="W"){const ok=iss.filter(b=>findItem(b.p)),n=ok.reduce((a,b)=>a+b.rows.length,0),t=ok.reduce((a,b)=>a+b.rows.reduce((x,r)=>x+(Number(r.q)||0),0),0);
+    $("#opSum").textContent=n?`${n} wyd. na PP, ${fmtQ(t)} szt.`:"";return}
+  const ok=opRows.filter(r=>findItem(r.p)&&Number(r.q)>0),mult=r=>opMode==="W"?Math.max(1,parsePPs(r.pp).length):1;
   const n=ok.reduce((a,r)=>a+mult(r),0),t=ok.reduce((a,r)=>a+Number(r.q)*mult(r),0);
   $("#opSum").textContent=n?(opMode==="W"?`${n} wyd. na PP, ${fmtQ(t)} szt.`:`${n} poz., ${fmtQ(t)} szt.`):""}
+/* ===== Wydanie: produkt raz, potem lista PP z ilościami (− / +) ===== */
+const newBlk=()=>({p:"",def:1,add:"",rows:[]});
+let iss=[newBlk()];
+/* „1468 1469, 1470x3” → [{pp:1468,q:def},{pp:1469,q:def},{pp:1470,q:3}] */
+function parseIssTokens(v,def){return String(v||"").split(/[\s,;]+/).filter(Boolean).map(t=>{const m=t.match(/^(.+?)[x×*:](\d+)$/i);return m?{pp:m[1],q:Number(m[2])}:{pp:t,q:def}})}
+function issStock(b){const it=findItem(b.p);if(!it)return b.p.trim()?'<span class="neg">nie ma takiego produktu</span>':"";
+  const st=stanOf(it.code),t=b.rows.reduce((a,r)=>a+(Number(r.q)||0),0);
+  return `Na stanie ${fmtQ(st)} szt.${t?` · wydajesz ${fmtQ(t)} na ${b.rows.length} PP · zostanie <b class="${st-t<0?"neg":""}">${fmtQ(st-t)}</b>`:""}`}
+function issStocks(){$$("#issBlocks .iblk").forEach(el=>{const b=iss[el.dataset.b];if(b)el.querySelector("[data-bst]").innerHTML=issStock(b)});opSum()}
+function renderIss(focusFirst){fillProdList();
+  $("#issBlocks").innerHTML=iss.map((b,bi)=>`<div class="iblk" data-b="${bi}">
+    <div class="ihead"><input list="prodList" data-bf="p" value="${esc(b.p)}" placeholder="Produkt — nazwa albo kod">${iss.length>1?`<button class="x" data-brm title="Usuń produkt">×</button>`:""}</div>
+    <div class="ist note" data-bst>${issStock(b)}</div>
+    <div class="iadd"><input data-bf="add" value="${esc(b.add)}" placeholder="Numer PP i Enter (kilka: 1468 1469 · 1470x3)">
+      <span class="note">nowy PP:</span><span class="step"><button data-bdef="-1" title="mniej">−</button><input type="number" min="1" data-bf="def" value="${b.def}"><button data-bdef="1" title="więcej">+</button></span><span class="note">szt.</span></div>
+    ${b.rows.length?`<div class="irows">${b.rows.map((r,ri)=>`<div class="irow" data-r="${ri}"><span class="ipp">PP <b>${esc(r.pp)}</b></span>
+      <span class="step"><button data-rd="-1" title="mniej">−</button><input type="number" min="1" data-rq value="${esc(r.q)}"><button data-rd="1" title="więcej">+</button></span><button class="x" data-rrm title="Usuń PP">×</button></div>`).join("")}</div>`:""}
+  </div>`).join("");
+  opSum();if(focusFirst){const f=$("#issBlocks [data-bf=p]");if(f)(iss[0].p?$("#issBlocks [data-bf=add]"):f).focus()}}
+function issAdd(bi){const b=iss[bi],el=$(`#issBlocks [data-b="${bi}"] [data-bf=add]`),toks=parseIssTokens(b.add,Number(b.def)||1);if(!toks.length)return;
+  const more=[];toks.forEach(t=>{const ex=b.rows.find(r=>r.pp===t.pp);if(ex){ex.q=(Number(ex.q)||0)+t.q;more.push(t.pp)}else b.rows.push({pp:t.pp,q:t.q})});
+  b.add="";renderIss();$(`#issBlocks [data-b="${bi}"] [data-bf=add]`).focus();
+  if(more.length)toast(`PP ${more.join(", ")} już było — dodano do ilości`)}
+$("#issBlocks").addEventListener("input",e=>{const el=e.target.closest(".iblk");if(!el)return;const b=iss[el.dataset.b],t=e.target;t.classList.remove("bad");
+  if(t.dataset.bf==="p"){b.p=t.value;el.querySelector("[data-bst]").innerHTML=issStock(b);opSum()}
+  else if(t.dataset.bf==="add")b.add=t.value;
+  else if(t.dataset.bf==="def")b.def=Math.max(1,Math.round(Number(t.value)||1));
+  else if(t.dataset.rq!==undefined){b.rows[t.closest("[data-r]").dataset.r].q=t.value;el.querySelector("[data-bst]").innerHTML=issStock(b);opSum()}});
+$("#issBlocks").addEventListener("change",e=>{const el=e.target.closest(".iblk");if(!el||e.target.dataset.bf!=="p")return;const b=iss[el.dataset.b],it=findItem(e.target.value);
+  if(it&&e.target.value!==it.name){e.target.value=b.p=it.name;el.querySelector("[data-bst]").innerHTML=issStock(b)}});
+$("#issBlocks").addEventListener("click",e=>{const el=e.target.closest(".iblk");if(!el)return;const bi=+el.dataset.b,b=iss[bi],t=e.target;
+  if(t.closest("[data-brm]")){iss.splice(bi,1);if(!iss.length)iss.push(newBlk());renderIss();return}
+  const d=t.closest("[data-bdef]");if(d){b.def=Math.max(1,(Number(b.def)||1)+Number(d.dataset.bdef));el.querySelector("[data-bf=def]").value=b.def;return}
+  const rd=t.closest("[data-rd]");if(rd){const r=b.rows[rd.closest("[data-r]").dataset.r];r.q=Math.max(1,(Number(r.q)||0)+Number(rd.dataset.rd));rd.parentElement.querySelector("[data-rq]").value=r.q;
+    el.querySelector("[data-bst]").innerHTML=issStock(b);opSum();return}
+  if(t.closest("[data-rrm]")){b.rows.splice(+t.closest("[data-r]").dataset.r,1);renderIss();$(`#issBlocks [data-b="${bi}"] [data-bf=add]`).focus()}});
+$("#issBlocks").addEventListener("keydown",e=>{if(e.key!=="Enter")return;const el=e.target.closest(".iblk");if(!el)return;e.preventDefault();const bi=+el.dataset.b;
+  if(e.target.dataset.bf==="p")el.querySelector("[data-bf=add]").focus();
+  else if(e.target.dataset.bf==="add")issAdd(bi);
+  else if(e.target.dataset.rq!==undefined||e.target.dataset.bf==="def")el.querySelector("[data-bf=add]").focus()});
+async function saveIss(){let bad=false;const todo=[];
+  iss.forEach((b,bi)=>{const el=$(`#issBlocks [data-b="${bi}"]`);
+    if(b.add.trim()){parseIssTokens(b.add,Number(b.def)||1).forEach(t=>{const ex=b.rows.find(r=>r.pp===t.pp);ex?ex.q=(Number(ex.q)||0)+t.q:b.rows.push(t)});b.add=""}   // wpisany, a nie dodany PP też się liczy
+    if(!b.p.trim()&&!b.rows.length)return;
+    const it=findItem(b.p);if(!it){el.querySelector("[data-bf=p]").classList.add("bad");bad=true;return}
+    if(!b.rows.length){el.querySelector("[data-bf=add]").classList.add("bad");bad=true;return}
+    if(b.rows.some(r=>!(Number(r.q)>0)||Number(r.q)!==Math.round(Number(r.q)))){bad=true;return}
+    todo.push({it,lines:b.rows.map(r=>({qty:Number(r.q),pp:String(r.pp)}))})});
+  if(bad){renderIss();iss.forEach((b,bi)=>{const el=$(`#issBlocks [data-b="${bi}"]`);if(b.p.trim()&&!findItem(b.p))el.querySelector("[data-bf=p]").classList.add("bad");else if(b.p.trim()&&!b.rows.length)el.querySelector("[data-bf=add]").classList.add("bad")});
+    return toast("Popraw zaznaczone: produkt z listy i co najmniej jeden numer PP",true)}
+  if(!todo.length)return toast("Wybierz produkt i dodaj numery PP",true);
+  const by=new Map();todo.forEach(x=>{if(!by.has(x.it.code))by.set(x.it.code,{it:x.it,lines:[]});by.get(x.it.code).lines.push(...x.lines)});
+  const btn=$("#opSave");btn.disabled=true;btn.textContent="Zapisuję…";
+  try{for(const{it,lines}of by.values())await post({action:"addEntries",code:it.code,name:it.name,by:me,lines});
+    toast(`Wydano ${fmtQ(todo.reduce((a,x)=>a+x.lines.reduce((s,l)=>s+l.qty,0),0))} szt. na ${todo.reduce((a,x)=>a+x.lines.length,0)} PP`);
+    iss=[newBlk()];renderIss(true);await loadAll()}
+  catch(e){toast("Nie zapisano: "+e.message+" — sprawdź historię, zanim zapiszesz ponownie",true)}
+  finally{btn.disabled=false;btn.textContent="Zapisz"}}
+
 $("#opMode").onclick=e=>{const b=e.target.closest("[data-m]");if(!b)return;opMode=b.dataset.m;setSeg("#opMode","m",opMode);renderOps(true)};
 $("#opRows").addEventListener("input",e=>{const row=e.target.closest(".oprow"),f=e.target.dataset.f;if(!row||!f)return;
   opRows[row.dataset.i][f]=e.target.value;e.target.classList.remove("bad");
@@ -553,8 +629,10 @@ $("#opRows").addEventListener("keydown",e=>{if(e.key!=="Enter")return;e.preventD
   const ins=$$("#opRows input"),i=ins.indexOf(e.target);
   if(i===ins.length-1){const last=opRows[opRows.length-1];opRows.push({p:"",q:"",pp:opMode==="W"?last.pp:""});renderOps(true)}
   else ins[i+1].focus()});
-$("#opAdd").onclick=()=>{opRows.push({p:"",q:"",pp:""});renderOps(true)};
+$("#opAdd").onclick=()=>{if(opMode==="W"){iss.push(newBlk());renderIss();const l=$$("#issBlocks [data-bf=p]");l[l.length-1].focus();return}
+  opRows.push({p:"",q:"",pp:""});renderOps(true)};
 $("#opSave").onclick=async()=>{
+  if(opMode==="W")return saveIss();
   const rows=$$("#opRows .oprow");let bad=0;const good=[];
   opRows.forEach((r,i)=>{const empty=!r.p.trim()&&!r.q&&!(r.pp||"").trim();if(empty)return;const el=rows[i];
     const it=findItem(r.p),q=Number(r.q),pp=(r.pp||"").trim();
