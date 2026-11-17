@@ -16,7 +16,7 @@
 <script>
 /* Wersja aplikacji — przy każdej zmianie podnieś ją razem z CACHE w sw.js.
    Telefon porównuje ją z wersją na stronie i pokazuje „Jest nowa wersja”. */
-const APP_VER = "24";
+const APP_VER = "25";
 const JSQR_URL = "lib/jsQR.js";  // dekoder dla telefonów bez wbudowanego (iPhone)
 /* ====== USTAWIENIA — wklej tutaj swoje dane ====== */
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx_l3IXdsc9yk0NrP27OX9__7Dij8gnpiuG3XyWeDsgG0oDVVVV7z911Y06SQ8cO7M8qQ/exec";  // adres aplikacji internetowej z Apps Script (kończy się na /exec)
@@ -78,6 +78,7 @@ input:focus-visible,button:focus-visible,select:focus-visible{outline:3px solid 
 .code{font-family:var(--mono);font-size:13px;color:var(--muted);word-break:break-all}
 .lines{display:flex;flex-direction:column;gap:8px}
 .line{display:grid;grid-template-columns:88px 1fr 44px;gap:8px;align-items:center}
+.bulk{border:1px dashed var(--line);border-radius:6px;padding:12px;display:flex;flex-direction:column;gap:10px}
 .line .x{border:0;background:none;color:var(--muted);font-size:22px;cursor:pointer;height:44px}
 .pp{position:relative}
 .pp::before{content:"PP";position:absolute;left:12px;top:50%;transform:translateY(-50%);font:600 14px var(--mono);color:var(--muted);pointer-events:none}
@@ -276,7 +277,14 @@ nav .dot{position:absolute;top:6px;right:calc(50% - 30px);width:8px;height:8px;b
       <div id="mW" style="display:flex;flex-direction:column;gap:12px">
         <div class="line"><span class="label">Ilość</span><span class="label">Numer PP</span><span></span></div>
         <div class="lines" id="lines"></div>
-        <button class="btn" id="addLine">+ Dodaj kolejny PP</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" id="addLine" style="flex:1">+ Dodaj kolejny PP</button><button class="btn" id="bulkOpen" style="flex:1">Ta sama ilość na kilka PP</button></div>
+        <div id="bulkPP" class="bulk" hidden>
+          <div class="line" style="grid-template-columns:88px 1fr"><span class="label">Na każde PP</span><span class="label">Numery PP (oddziel spacją)</span>
+            <div class="qty"><input id="bulkQ" type="number" inputmode="numeric" min="1" value="1" aria-label="Ilość na każde PP"></div>
+            <input id="bulkList" inputmode="text" autocapitalize="off" autocomplete="off" placeholder="1468 1469 1470" aria-label="Numery PP"></div>
+          <div class="note" id="bulkInfo">Wpisz numery PP oddzielone spacją albo przecinkiem.</div>
+          <div style="display:flex;gap:8px"><button class="btn primary" id="bulkAdd" style="flex:2">Rozpisz na PP</button><button class="btn" id="bulkClose" style="flex:1">Anuluj</button></div>
+        </div>
       </div>
       <div id="mP" hidden>
         <div class="line" style="grid-template-columns:88px 1fr"><span class="label">Ilość</span><span class="label">Nr faktury (opcjonalnie)</span>
@@ -721,7 +729,7 @@ function openCode(code,src){code=code.trim();$("#scanMsg").hidden=true;closePick
   if(!it){$("#itemPanel").hidden=true;$("#newItem").hidden=false;$("#newCode").textContent=code;$("#newItem").dataset.code=code;$("#newName").value="";$("#newName").focus();return}
   $("#itemLbl").textContent=src==="list"?"Wybrano z listy":"Zeskanowano";
   $("#newItem").hidden=true;current=it;$("#itemName").textContent=it.name;$("#itemCode").textContent=it.code;
-  $("#lines").innerHTML="";addLine();$("#rQty").value="";$("#rDoc").value="";resetInvDate("r");$("#rBox").hidden=true;$("#kQty").value="";
+  $("#lines").innerHTML="";addLine();$("#bulkPP").hidden=true;$("#bulkList").value="";$("#rQty").value="";$("#rDoc").value="";resetInvDate("r");$("#rBox").hidden=true;$("#kQty").value="";
   setMode(mode);renderItemStats();$("#itemPanel").hidden=false;focusMode()}
 // tryb zostaje do końca sesji — przy przyjmowaniu dostawy nie trzeba przełączać przy każdym kodzie
 const SAVE_LBL={W:"Zapisz wydanie",P:"Zapisz przyjęcie",K:"Zapisz stan"};
@@ -734,18 +742,40 @@ $("#newSave").onclick=async()=>{const name=$("#newName").value.trim(),code=$("#n
   try{await post({action:"addItem",code,name});items.push({code,name});renderProd();renderFilter();openCode(code)}catch(e){toast(e.message,true)}};
 
 let lineN=0;
-function addLine(){const i=++lineN,d=document.createElement("div");d.className="line";
+/* numery PP: kilka w jednym polu, oddzielone spacją, przecinkiem albo średnikiem (bez powtórzeń) */
+const parsePPs=v=>[...new Set(String(v||"").split(/[\s,;]+/).map(x=>x.trim()).filter(Boolean))];
+function addLine(qty,pp){const prev=$("#lines").lastElementChild,i=++lineN,d=document.createElement("div");d.className="line";
+  if(qty===undefined&&prev)qty=prev.querySelector(".qty input").value;   // nowy wiersz bierze ilość z poprzedniego
   d.innerHTML=`<div class="qty"><input id="q${i}" type="number" inputmode="numeric" min="1" placeholder="0" aria-label="Ilość"></div><div class="pp"><input id="p${i}" inputmode="numeric" placeholder="1468" aria-label="Numer PP"></div><button class="x" aria-label="Usuń wiersz">✕</button>`;
   d.querySelector(".x").onclick=()=>{if($("#lines").children.length>1){d.remove();updSum()}};
-  d.addEventListener("input",updSum);$("#lines").appendChild(d);d.querySelector("input").focus();updSum()}
-function readLines(){return[...$("#lines").children].map(d=>({qty:Number(d.querySelector(".qty input").value),pp:d.querySelector(".pp input").value.trim()}))}
+  d.addEventListener("input",updSum);$("#lines").appendChild(d);
+  if(qty)d.querySelector(".qty input").value=qty;if(pp)d.querySelector(".pp input").value=pp;
+  if(pp===undefined)(qty?d.querySelector(".pp input"):d.querySelector(".qty input")).focus();updSum()}
+/* Enter w polu PP = od razu następny wiersz (z tą samą ilością) */
+$("#lines").addEventListener("keydown",e=>{if(e.key!=="Enter"||!e.target.closest(".pp"))return;e.preventDefault();
+  if(e.target.value.trim()&&e.target.closest(".line")===$("#lines").lastElementChild)addLine();
+  else{const n=e.target.closest(".line").nextElementSibling;if(n)n.querySelector(".pp input").focus()}});
+function readLines(){return[...$("#lines").children].flatMap(d=>{const qty=Number(d.querySelector(".qty input").value),v=d.querySelector(".pp input").value.trim(),pps=parsePPs(v);
+  return pps.length>1?pps.map(pp=>({qty,pp})):[{qty,pp:v}]})}
+function bulkInfo(){const q=Number($("#bulkQ").value),l=parsePPs($("#bulkList").value);
+  $("#bulkInfo").textContent=l.length?`${l.length} PP × ${q>0?fmtQ(q):"?"} szt. = ${q>0?fmtQ(q*l.length):"?"} szt.`:"Wpisz numery PP oddzielone spacją albo przecinkiem."}
+$("#bulkOpen").onclick=()=>{const b=$("#bulkPP");b.hidden=!b.hidden;if(!b.hidden){const f=$("#lines .qty input");if(f&&Number(f.value)>0)$("#bulkQ").value=f.value;bulkInfo();$("#bulkList").focus()}};
+$("#bulkClose").onclick=()=>{$("#bulkPP").hidden=true};
+$("#bulkQ").oninput=bulkInfo;$("#bulkList").oninput=bulkInfo;
+$("#bulkList").onkeydown=e=>{if(e.key==="Enter"){e.preventDefault();$("#bulkAdd").click()}};
+$("#bulkAdd").onclick=()=>{const q=Number($("#bulkQ").value),l=parsePPs($("#bulkList").value);
+  if(!(q>0)||q!==Math.round(q)){$("#bulkQ").focus();return toast("Wpisz ilość na każde PP",true)}
+  if(!l.length){$("#bulkList").focus();return toast("Wpisz numery PP",true)}
+  [...$("#lines").children].forEach(d=>{if(!d.querySelector(".pp input").value.trim())d.remove()});   // puste wiersze znikają
+  l.forEach(pp=>addLine(q,pp));$("#bulkList").value="";$("#bulkPP").hidden=true;bulkInfo();updSum();
+  toast(`Rozpisano na ${l.length} PP`)};
 function updSum(){if(!current)return;const st=stanOf(current.code),el=$("#sum");let t="",bad=false;
   if(mode==="W"){const l=readLines().filter(x=>x.qty>0&&x.pp),s=l.reduce((a,x)=>a+x.qty,0);
     if(l.length){const left=st-s;bad=left<0||(current.min>0&&left<current.min);t=`Razem: ${fmtQ(s)} szt. na ${l.length} PP · zostanie ${fmtQ(left)} szt.`}}
   else if(mode==="P"){const q=Number($("#rQty").value);if(q>0)t=`Po przyjęciu na stanie: ${fmtQ(st+q)} szt.`}
   else{const v=$("#kQty").value;if(v!==""){const d=Number(v)-st;t=d?`W aplikacji ${fmtQ(st)} szt. → korekta ${sgn(d)} szt.`:"Zgadza się ze stanem w aplikacji."}}
   el.textContent=t;el.classList.toggle("neg",bad)}
-$("#addLine").onclick=addLine;
+$("#addLine").onclick=()=>addLine();
 $("#itemClose").onclick=()=>{$("#itemPanel").hidden=true;current=null};
 function closeNew(){$("#newItem").hidden=true;$("#newName").value="";delete $("#newItem").dataset.code}
 $("#newClose").onclick=closeNew;

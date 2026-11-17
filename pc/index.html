@@ -14,7 +14,7 @@
 /* Wersja na komputer. Te same dane co w telefonie (ten sam Apps Script i ta sama tabela),
    ale osobna strona — wersja na telefon nie jest tu w ogóle zmieniana.
    Przy każdej zmianie podnieś PC_VER (komputer pokaże „Jest nowa wersja”). */
-const PC_VER = "7";
+const PC_VER = "8";
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx_l3IXdsc9yk0NrP27OX9__7Dij8gnpiuG3XyWeDsgG0oDVVVV7z911Y06SQ8cO7M8qQ/exec";
 </script>
 <style>
@@ -107,8 +107,9 @@ tr.low td{background:var(--warn-bg)}
 .grid2 .tbl{max-height:420px}
 /* --- operacje --- */
 .ops{max-width:880px}
-.oprow{display:grid;grid-template-columns:1fr 110px 150px 90px 36px;gap:8px;align-items:center;margin-bottom:6px}
+.oprow{display:grid;grid-template-columns:1fr 100px 220px 130px 36px;gap:8px;align-items:center;margin-bottom:6px}
 .oprow.rec{grid-template-columns:1fr 110px 90px 36px}
+.oprow .st .multi{color:var(--fg);font-weight:600}
 .oprow .st{font-size:12.5px;color:var(--muted);text-align:right}
 .ophead{font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-bottom:4px}
 .x{background:none;border:0;color:var(--muted);font-size:20px;cursor:pointer;line-height:1}
@@ -236,7 +237,7 @@ tr.sel td{background:color-mix(in srgb,var(--accent) 18%,var(--surface))}
         <div class="note" style="margin-top:4px">Z numerem faktury wydania będą z niej schodzić automatycznie (najstarsza faktura najpierw).</div></div>
       <div id="opHead"></div>
       <div id="opRows"></div>
-      <div class="bar" style="margin:10px 0 0"><button class="btn" id="opAdd">+ Wiersz</button><span class="note grow">Enter w ostatnim polu dodaje nowy wiersz. Produkt możesz wpisać nazwą albo kodem.</span>
+      <div class="bar" style="margin:10px 0 0"><button class="btn" id="opAdd">+ Wiersz</button><span class="note grow">Enter w ostatnim polu dodaje nowy wiersz. Produkt możesz wpisać nazwą albo kodem. Kilka PP w jednym wierszu (np. <b>1468, 1469, 1470</b>) — ilość pójdzie na każde PP.</span>
         <span id="opSum" class="note"></span><button class="btn primary" id="opSave">Zapisz</button></div>
     </div>
   </div>
@@ -525,19 +526,24 @@ function renderOps(focusLast){
   $("#opHead").innerHTML=`<div class="oprow ophead${rec?" rec":""}"><span>Produkt</span><span>Ilość</span>${rec?"":"<span>PP</span>"}<span style="text-align:right">Na stanie</span><span></span></div>`;
   $("#opRows").innerHTML=opRows.map((r,i)=>{const it=findItem(r.p);
     return `<div class="oprow${rec?" rec":""}" data-i="${i}"><input list="prodList" data-f="p" value="${esc(r.p)}" placeholder="Nazwa albo kod produktu">
-      <input type="number" min="1" data-f="q" value="${esc(r.q)}" placeholder="szt.">${rec?"":`<input data-f="pp" value="${esc(r.pp)}" placeholder="numer PP">`}
-      <span class="st" data-st>${it?fmtQ(stanOf(it.code))+" szt.":""}</span><button class="x" data-rm title="Usuń wiersz">×</button></div>`}).join("");
+      <input type="number" min="1" data-f="q" value="${esc(r.q)}" placeholder="szt.">${rec?"":`<input data-f="pp" value="${esc(r.pp)}" placeholder="PP (lub kilka: 1468, 1469)">`}
+      <span class="st" data-st>${stText(r,it)}</span><button class="x" data-rm title="Usuń wiersz">×</button></div>`}).join("");
   opSum();
   if(focusLast){const r=$$("#opRows .oprow");const f=r[r.length-1]&&r[r.length-1].querySelector("input");if(f)f.focus()}}
+/* kilka numerów PP w jednym polu: spacja, przecinek albo średnik */
+const parsePPs=v=>[...new Set(String(v||"").split(/[\s,;]+/).map(x=>x.trim()).filter(Boolean))];
+function stText(r,it){const n=opMode==="W"?parsePPs(r.pp).length:0;
+  return (n>1?`<b class="multi">×${n} PP = ${fmtQ((Number(r.q)||0)*n)} szt.</b><br>`:"")+(it?fmtQ(stanOf(it.code))+" szt.":"")}
 function fillProdList(){$("#prodList").innerHTML=items.map(i=>`<option value="${esc(i.name)}">${esc(i.code)}</option>`).join("")}
 function renderOpsAux(){fillProdList();
-  $$("#opRows .oprow").forEach(row=>{const it=findItem(opRows[row.dataset.i].p);row.querySelector("[data-st]").textContent=it?fmtQ(stanOf(it.code))+" szt.":""})}
-function opSum(){const n=opRows.filter(r=>findItem(r.p)&&Number(r.q)>0).length,t=opRows.reduce((a,r)=>a+(findItem(r.p)&&Number(r.q)>0?Number(r.q):0),0);
-  $("#opSum").textContent=n?`${n} poz., ${fmtQ(t)} szt.`:""}
+  $$("#opRows .oprow").forEach(row=>{const r=opRows[row.dataset.i];row.querySelector("[data-st]").innerHTML=stText(r,findItem(r.p))})}
+function opSum(){const ok=opRows.filter(r=>findItem(r.p)&&Number(r.q)>0),mult=r=>opMode==="W"?Math.max(1,parsePPs(r.pp).length):1;
+  const n=ok.reduce((a,r)=>a+mult(r),0),t=ok.reduce((a,r)=>a+Number(r.q)*mult(r),0);
+  $("#opSum").textContent=n?(opMode==="W"?`${n} wyd. na PP, ${fmtQ(t)} szt.`:`${n} poz., ${fmtQ(t)} szt.`):""}
 $("#opMode").onclick=e=>{const b=e.target.closest("[data-m]");if(!b)return;opMode=b.dataset.m;setSeg("#opMode","m",opMode);renderOps(true)};
 $("#opRows").addEventListener("input",e=>{const row=e.target.closest(".oprow"),f=e.target.dataset.f;if(!row||!f)return;
   opRows[row.dataset.i][f]=e.target.value;e.target.classList.remove("bad");
-  if(f==="p"){const it=findItem(e.target.value);row.querySelector("[data-st]").textContent=it?fmtQ(stanOf(it.code))+" szt.":""}
+  if(f==="p"||f==="pp"||f==="q"){const r=opRows[row.dataset.i];row.querySelector("[data-st]").innerHTML=stText(r,findItem(r.p))}
   opSum()});
 $("#opRows").addEventListener("change",e=>{if(e.target.dataset.f!=="p")return;const it=findItem(e.target.value);
   if(it&&e.target.value!==it.name){e.target.value=it.name;opRows[e.target.closest(".oprow").dataset.i].p=it.name}});
@@ -555,7 +561,7 @@ $("#opSave").onclick=async()=>{
     if(!it){el.querySelector('[data-f="p"]').classList.add("bad");bad++}
     if(!(q>0)||q!==Math.round(q)){el.querySelector('[data-f="q"]').classList.add("bad");bad++}
     if(opMode==="W"&&!pp){el.querySelector('[data-f="pp"]').classList.add("bad");bad++}
-    if(it&&q>0)good.push({it,q,pp})});
+    if(it&&q>0){if(opMode==="W")parsePPs(pp).forEach(x=>good.push({it,q,pp:x}));else good.push({it,q,pp})}});
   if(bad)return toast(opMode==="W"?"Popraw zaznaczone pola: produkt z listy, ilość i numer PP":"Popraw zaznaczone pola: produkt z listy i ilość",true);
   if(!good.length)return toast("Dodaj co najmniej jeden produkt",true);
   const b=$("#opSave");b.disabled=true;b.textContent="Zapisuję…";
