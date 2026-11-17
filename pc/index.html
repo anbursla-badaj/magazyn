@@ -14,7 +14,7 @@
 /* Wersja na komputer. Te same dane co w telefonie (ten sam Apps Script i ta sama tabela),
    ale osobna strona — wersja na telefon nie jest tu w ogóle zmieniana.
    Przy każdej zmianie podnieś PC_VER (komputer pokaże „Jest nowa wersja”). */
-const PC_VER = "6";
+const PC_VER = "7";
 const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx_l3IXdsc9yk0NrP27OX9__7Dij8gnpiuG3XyWeDsgG0oDVVVV7z911Y06SQ8cO7M8qQ/exec";
 </script>
 <style>
@@ -118,6 +118,8 @@ tr.low td{background:var(--warn-bg)}
 .split .tbl{max-height:calc(100vh - 200px)}
 tr.sel td{background:color-mix(in srgb,var(--accent) 18%,var(--surface))}
 .detail{position:sticky;top:12px;max-height:calc(100vh - 40px);overflow:auto}
+.dtools{float:right;display:flex;gap:6px}
+.delask{border:1px solid var(--err);background:color-mix(in srgb,var(--err) 7%,var(--surface));border-radius:6px;padding:12px;margin-bottom:14px;display:flex;flex-direction:column;gap:6px}
 .detail h3{font:700 22px var(--display);margin:0 0 2px;text-transform:uppercase}
 .detail h4{margin:16px 0 6px;font-size:15px;display:flex;justify-content:space-between;gap:10px}
 .prog{height:6px;background:var(--soft);border-radius:3px;overflow:hidden;margin-bottom:6px}
@@ -372,7 +374,7 @@ window.addEventListener("focus",()=>{if(pin&&Date.now()-lastLoad>60000)loadAll(t
 
 /* odświeżenie w tle nie może zabrać kursora z pola, w którym ktoś pisze */
 let pendingRender=false;
-function busyTyping(){const a=document.activeElement;return a&&a.closest&&a.closest(".tbl,#opRows")&&/INPUT|SELECT/.test(a.tagName)}
+function busyTyping(){const a=document.activeElement;return a&&a.closest&&a.closest(".tbl,#opRows,#fDetail")&&/INPUT|SELECT/.test(a.tagName)}
 function renderSafe(){if(busyTyping()){pendingRender=true;return}pendingRender=false;render()}
 document.addEventListener("focusout",()=>setTimeout(()=>{if(pendingRender&&!busyTyping())renderSafe()},50));
 
@@ -527,7 +529,8 @@ function renderOps(focusLast){
       <span class="st" data-st>${it?fmtQ(stanOf(it.code))+" szt.":""}</span><button class="x" data-rm title="Usuń wiersz">×</button></div>`}).join("");
   opSum();
   if(focusLast){const r=$$("#opRows .oprow");const f=r[r.length-1]&&r[r.length-1].querySelector("input");if(f)f.focus()}}
-function renderOpsAux(){$("#prodList").innerHTML=items.map(i=>`<option value="${esc(i.name)}">${esc(i.code)}</option>`).join("");
+function fillProdList(){$("#prodList").innerHTML=items.map(i=>`<option value="${esc(i.name)}">${esc(i.code)}</option>`).join("")}
+function renderOpsAux(){fillProdList();
   $$("#opRows .oprow").forEach(row=>{const it=findItem(opRows[row.dataset.i].p);row.querySelector("[data-st]").textContent=it?fmtQ(stanOf(it.code))+" szt.":""})}
 function opSum(){const n=opRows.filter(r=>findItem(r.p)&&Number(r.q)>0).length,t=opRows.reduce((a,r)=>a+(findItem(r.p)&&Number(r.q)>0?Number(r.q):0),0);
   $("#opSum").textContent=n?`${n} poz., ${fmtQ(t)} szt.`:""}
@@ -635,11 +638,71 @@ function renderFakt(){
   renderFDetail()}
 function renderFDetail(){const inv=invoices.find(i=>i.key===fSel),box=$("#fDetail");
   if(!inv){box.innerHTML=`<div class="empty">Wybierz fakturę z listy.</div>`;return}
-  box.innerHTML=`<h3>${esc(inv.doc)}</h3><div class="note">${inv.date?`Wystawiona ${esc(inv.date)} · `:""}Przyjęta ${esc(inv.at)} · <span class="pill ${inv.closed?"closed":"open"}">${inv.closed?"Zamknięta "+esc(inv.closedAt.slice(0,10)):"Otwarta — zostało "+fmtQ(inv.total-inv.used)+" szt."}</span></div>
+  if(fEdit&&fEdit.key===inv.key)return renderFEdit(inv,box);
+  const sumQ=inv.total,usedQ=inv.lines.reduce((a,x)=>a+x.used,0);
+  box.innerHTML=`<div class="dtools">${fDelAsk===inv.key?"":`<button class="btn small" data-fedit>Edytuj</button><button class="btn small danger" data-fdel>Usuń</button>`}</div>
+    ${fDelAsk===inv.key?`<div class="delask"><b>Usunąć fakturę ${esc(inv.doc)}?</b><div>Przyjęcie zostanie cofnięte — stan magazynu zmniejszy się o <b>${fmtQ(sumQ)} szt.</b> (${esc(inv.lines.map(x=>x.name+" "+fmtQ(x.qty)).join(", "))}).${usedQ?` Wydania z tej faktury (${fmtQ(usedQ)} szt.) przejdą na inne faktury albo zostaną bez faktury.`:""}</div>
+      <div class="bar" style="margin:10px 0 0"><button class="btn danger" data-fdelyes>Tak, usuń fakturę</button><button class="btn" data-fdelno>Anuluj</button></div></div>`:""}
+    <h3>${esc(inv.doc)}</h3><div class="note">${inv.date?`Wystawiona ${esc(inv.date)} · `:""}Przyjęta ${esc(inv.at)} · <span class="pill ${inv.closed?"closed":"open"}">${inv.closed?"Zamknięta "+esc(inv.closedAt.slice(0,10)):"Otwarta — zostało "+fmtQ(inv.total-inv.used)+" szt."}</span></div>
     ${inv.lines.map(x=>{const u=Math.min(x.used,x.qty),pc=x.qty?Math.round(u/x.qty*100):0;
       return `<h4><span>${esc(x.name)}</span><span class="note">${fmtQ(u)} / ${fmtQ(x.qty)} szt.</span></h4><div class="prog"><i class="${u>=x.qty?"full":""}" style="width:${pc}%"></i></div>
       ${x.allocs.length?`<table><thead><tr><th>PP</th><th class="n">Ilość</th><th>Data</th><th>Kto</th></tr></thead><tbody>${x.allocs.map(a=>`<tr><td><b>${esc(a.pp)}</b></td><td class="n">${fmtQ(a.qty)}</td><td class="sub">${esc(a.at)}</td><td class="sub">${esc(a.by)}</td></tr>`).join("")}</tbody></table>`:'<div class="note">Jeszcze nic nie wydano.</div>'}`}).join("")}`}
 onSort($("#fTbl"),fSort,renderFakt);
+/* --- edycja i usuwanie faktury --- */
+let fEdit=null,fDelAsk=null;
+function renderFEdit(inv,box){const e=fEdit,used=new Map(inv.lines.map(x=>[x.code,x.used]));fillProdList();
+  box.innerHTML=`<h3>Edycja faktury</h3><div class="note" style="margin-bottom:12px">Przyjęta ${esc(inv.at)} — data przyjęcia i kolejność rozliczania zostają bez zmian.</div>
+    <div class="label">Numer faktury</div><input data-fe="doc" value="${esc(e.doc)}" style="width:100%;margin:4px 0 12px">
+    <div class="label">Data wystawienia</div><div style="display:flex;gap:12px;align-items:center;margin:4px 0 14px;flex-wrap:wrap">
+      <label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" data-fe="today"${e.today?" checked":""}> dzisiejsza data</label>
+      <input type="date" data-fe="date" value="${esc(e.date)}" max="${dayStr(new Date())}"${e.today?" hidden":""}>${!e.today&&!e.date?'<span class="note">brak daty</span>':""}</div>
+    <div class="oprow rec ophead" style="grid-template-columns:1fr 90px 30px"><span>Produkt</span><span>Ilość</span><span></span></div>
+    ${e.lines.map((l,i)=>`<div class="oprow rec" style="grid-template-columns:1fr 90px 30px" data-fi="${i}"><input list="prodList" data-fl="p" value="${esc(l.p)}" placeholder="Nazwa albo kod produktu"><input type="number" min="1" data-fl="q" value="${esc(l.q)}"><button class="x" data-flrm title="Usuń pozycję">×</button></div>`).join("")}
+    <button class="btn small" data-fladd style="margin-top:4px">+ Pozycja</button>
+    <div class="note" id="feWarn" style="margin-top:10px"></div>
+    <div class="bar" style="margin:14px 0 0;justify-content:flex-end"><button class="btn" data-fecancel>Anuluj</button><button class="btn primary" data-fesave>Zapisz zmiany</button></div>`;
+  feWarn(inv)}
+function feWarn(inv){const w=$("#feWarn");if(!w)return;const msgs=[];
+  inv.lines.forEach(x=>{if(!x.used)return;const q=fEdit.lines.filter(l=>{const it=findItem(l.p);return it&&it.code===x.code}).reduce((a,l)=>a+(Number(l.q)||0),0);
+    if(q<x.used)msgs.push(`${x.name}: wydano już ${fmtQ(x.used)} szt.${q?`, a na fakturze będzie ${fmtQ(q)}`:", a pozycja zostanie usunięta"}`)});
+  w.innerHTML=msgs.length?`<b>Uwaga:</b> ${esc(msgs.join("; "))}. Nadwyżka wydań przejdzie na kolejne faktury albo zostanie bez faktury.`:""}
+$("#fDetail").addEventListener("click",async ev=>{const t=ev.target,inv=invoices.find(i=>i.key===fSel);if(!inv)return;
+  if(t.closest("[data-fedit]")){const today=dayStr(new Date());
+    fEdit={key:inv.key,doc:inv.doc,today:inv.date===today,date:inv.date,hadDate:!!inv.date,lines:inv.lines.map(x=>({p:x.name,q:String(x.qty)}))};fDelAsk=null;renderFDetail();$('#fDetail [data-fe="doc"]').focus();return}
+  if(t.closest("[data-fdel]")){fDelAsk=inv.key;renderFDetail();return}
+  if(t.closest("[data-fdelno]")){fDelAsk=null;renderFDetail();return}
+  if(t.closest("[data-fdelyes]")){t.disabled=true;t.textContent="Usuwam…";
+    try{const r=await post({action:"deleteInvoice",doc:inv.doc});toast(`Usunięto fakturę ${inv.doc}`);fDelAsk=null;fChecked.delete(inv.key);fSel=null;await loadAll()}
+    catch(er){toast("Nie usunięto: "+er.message,true);fDelAsk=null;renderFDetail()}return}
+  if(!fEdit)return;
+  if(t.closest("[data-fladd]")){fEdit.lines.push({p:"",q:""});renderFDetail();const r=$$("#fDetail [data-fl=p]");r[r.length-1].focus();return}
+  if(t.closest("[data-flrm]")){fEdit.lines.splice(+t.closest("[data-fi]").dataset.fi,1);renderFDetail();return}
+  if(t.closest("[data-fecancel]")){fEdit=null;renderFDetail();return}
+  if(t.closest("[data-fesave]")){const today=dayStr(new Date());let bad=false;const m=new Map();
+    const docEl=$('#fDetail [data-fe="doc"]'),doc=fEdit.doc.trim();if(!doc){docEl.classList.add("bad");return toast("Wpisz numer faktury",true)}
+    $$("#fDetail [data-fi]").forEach(row=>{const l=fEdit.lines[row.dataset.fi];if(!l.p.trim()&&!l.q)return;const it=findItem(l.p),q=Number(l.q);
+      if(!it){row.querySelector("[data-fl=p]").classList.add("bad");bad=true}
+      if(!(q>0)||q!==Math.round(q)){row.querySelector("[data-fl=q]").classList.add("bad");bad=true}
+      if(it&&q>0)m.set(it.code,(m.get(it.code)||0)+q)});
+    if(bad)return toast("Popraw zaznaczone pola: produkt z listy i ilość",true);
+    if(!m.size)return toast("Faktura musi mieć co najmniej jeden produkt (albo usuń całą fakturę)",true);
+    let invDate=fEdit.today?today:fEdit.date;
+    if(!fEdit.today&&!invDate&&fEdit.hadDate)return toast("Wybierz datę wystawienia faktury",true);
+    if(invDate>today)return toast("Data wystawienia nie może być z przyszłości",true);
+    t.disabled=true;t.textContent="Zapisuję…";
+    try{await post({action:"editInvoice",oldDoc:inv.doc,doc,invDate:invDate||"",by:me,lines:[...m].map(([code,qty])=>({code,qty}))});
+      const nk=invKey(doc);if(fChecked.delete(inv.key))fChecked.add(nk);fSel=nk;fEdit=null;toast("Faktura zapisana");await loadAll()}
+    catch(er){toast("Nie zapisano: "+er.message,true);t.disabled=false;t.textContent="Zapisz zmiany"}}});
+$("#fDetail").addEventListener("input",ev=>{if(!fEdit)return;const t=ev.target;t.classList.remove("bad");
+  if(t.dataset.fe==="doc")fEdit.doc=t.value;
+  else if(t.dataset.fe==="date")fEdit.date=t.value;
+  else if(t.dataset.fl){fEdit.lines[t.closest("[data-fi]").dataset.fi][t.dataset.fl]=t.value;const inv=invoices.find(i=>i.key===fEdit.key);if(inv)feWarn(inv)}});
+$("#fDetail").addEventListener("change",ev=>{if(!fEdit)return;const t=ev.target;
+  if(t.dataset.fe==="today"){fEdit.today=t.checked;if(!t.checked&&!fEdit.date)fEdit.date=dayStr(new Date());renderFDetail();if(!t.checked)$('#fDetail [data-fe="date"]').focus()}
+  if(t.dataset.fl==="p"){const it=findItem(t.value);if(it&&t.value!==it.name){t.value=it.name;fEdit.lines[t.closest("[data-fi]").dataset.fi].p=it.name}}});
+$("#fDetail").addEventListener("keydown",ev=>{if(fEdit&&ev.key==="Enter"&&ev.target.matches("input")){ev.preventDefault();$("#fDetail [data-fesave]").click()}
+});
+document.addEventListener("keydown",ev=>{if(ev.key==="Escape"&&view==="fakt"&&(fEdit||fDelAsk)){fEdit=null;fDelAsk=null;renderFDetail()}});
 $("#fTbl").addEventListener("change",e=>{
   if(e.target.id==="fAll"){fList().forEach(i=>e.target.checked?fChecked.add(i.key):fChecked.delete(i.key));renderFakt();return}
   const k=e.target.dataset.fchk;if(k===undefined)return;e.target.checked?fChecked.add(k):fChecked.delete(k);
@@ -650,7 +713,7 @@ function fSelInfo(){const n=fChecked.size,vis=new Set(fList().map(i=>i.key)),hid
   const fmt=$("#fPdf").checked?"PDF":"Excel";$("#fXlsx").textContent=n?`Raport dla księgowości — ${fmt} (${n})`:`Raport dla księgowości (${fmt})`;$("#fPrint").textContent=n?`Drukuj zaznaczone (${n})`:"Drukuj zaznaczone"}
 $("#fSelInfo").addEventListener("click",e=>{if(e.target.id==="fClr"){fChecked.clear();renderFakt()}});
 const fPicked=()=>{const l=fList(),seen=new Set(l.map(i=>i.key));return[...l.filter(i=>fChecked.has(i.key)),...invoices.filter(i=>fChecked.has(i.key)&&!seen.has(i.key))]};
-$("#fTbl").addEventListener("click",e=>{if(e.target.matches("input[type=checkbox]")||e.target.closest("th"))return;const r=e.target.closest("tr[data-inv]");if(!r)return;fSel=r.dataset.inv;
+$("#fTbl").addEventListener("click",e=>{if(e.target.matches("input[type=checkbox]")||e.target.closest("th"))return;const r=e.target.closest("tr[data-inv]");if(!r)return;if(fEdit&&fEdit.key!==r.dataset.inv&&!confirm("Porzucić niezapisane zmiany faktury?"))return;if(r.dataset.inv!==fSel){fEdit=null;fDelAsk=null}fSel=r.dataset.inv;
   $$("#fTbl tr[data-inv]").forEach(x=>x.classList.toggle("sel",x===r));renderFDetail()});
 $("#fStatus").onclick=e=>{const b=e.target.closest("[data-f]");if(!b)return;fStatus=b.dataset.f;setSeg("#fStatus","f",fStatus);renderFakt()};
 ["#fFrom","#fTo","#fBy"].forEach(s=>$(s).onchange=renderFakt);$("#fQ").oninput=renderFakt;

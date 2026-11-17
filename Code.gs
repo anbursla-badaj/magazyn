@@ -161,6 +161,8 @@ function invDateOf(body) {
   return isNaN(t) || t.toISOString().slice(0, 10) !== d ? '' : d;
 }
 
+function invKey(d) { return String(d || '').trim().replace(/\s+/g, ' ').toUpperCase(); }
+
 function newId() {
   return Utilities.getUuid().slice(0, 12);
 }
@@ -246,6 +248,51 @@ function doPost(e) {
       if (!data.length) return json({ ok: false, error: 'Dodaj do faktury co najmniej jeden produkt' });
       addRows(data);
       return json({ ok: true, saved: data.length });
+    }
+    // --- edycja i usuwanie faktury (faktura = przyjęcia z tym samym numerem dokumentu) ---
+    // Wiersze zmieniamy w miejscu i nowe pozycje wstawiamy obok starych, żeby faktura zachowała
+    // swoją datę przyjęcia i miejsce w kolejce (rozliczanie FIFO liczy się z kolejności wierszy).
+    if (body.action === 'editInvoice' || body.action === 'deleteInvoice') {
+      const sh = ss.getSheetByName('Wpisy'), all = rows('Wpisy');
+      const key = invKey(body.oldDoc || body.doc), idx = [];
+      all.forEach((r, i) => { if (String(r[7]) === 'Przyjęcie' && invKey(r[8]) === key) idx.push(i + 2); });
+      if (!key || !idx.length) return json({ ok: false, error: 'Nie znaleziono faktury — odśwież listę' });
+      if (body.action === 'deleteInvoice') {
+        for (let i = idx.length - 1; i >= 0; i--) sh.deleteRow(idx[i]);
+        return json({ ok: true, deleted: idx.length });
+      }
+      const doc = String(body.doc || '').trim().replace(/\s+/g, ' ');
+      if (!doc) return json({ ok: false, error: 'Wpisz numer faktury' });
+      if (invKey(doc) !== key && all.some(r => String(r[7]) === 'Przyjęcie' && invKey(r[8]) === invKey(doc)))
+        return json({ ok: false, error: 'Faktura „' + doc + '” już jest — wybierz inny numer' });
+      const names = {};
+      rows('Produkty').forEach(r => { if (r[0]) names[String(r[0])] = String(r[1]); });
+      const want = {}, order = [];
+      for (const l of (body.lines || [])) {
+        const c = String(l.code || ''), q = Number(l.qty);
+        if (!names[c]) return json({ ok: false, error: 'Nieznany produkt — odśwież listę' });
+        if (!(q > 0) || q !== Math.round(q)) return json({ ok: false, error: 'Ilość musi być liczbą całkowitą większą od zera' });
+        if (want[c] === undefined) order.push(c);
+        want[c] = (want[c] || 0) + q;
+      }
+      if (!order.length) return json({ ok: false, error: 'Faktura musi mieć co najmniej jeden produkt' });
+      const date = invDateOf(body), first = all[idx[0] - 2], seen = {}, del = [];
+      idx.forEach(rn => {
+        const c = String(all[rn - 2][2]);
+        if (want[c] !== undefined && !seen[c]) {
+          seen[c] = true;
+          sh.getRange(rn, 2, 1, 3).setValues([[names[c], c, want[c]]]);
+          sh.getRange(rn, 9, 1, 2).setValues([[doc, date]]);
+        } else del.push(rn);
+      });
+      for (let i = del.length - 1; i >= 0; i--) sh.deleteRow(del[i]);
+      const add = order.filter(c => !seen[c]).map(c => [first[0], names[c], c, want[c], '', String(body.by || first[5] || ''), newId(), 'Przyjęcie', doc, date]);
+      if (add.length) {
+        // pierwszy wiersz faktury nigdy nie jest nad usuniętymi, więc jego numer się nie zmienił
+        if (seen[String(first[2])]) sh.insertRowsAfter(idx[0], add.length); else sh.insertRowsBefore(idx[0], add.length);
+        sh.getRange(seen[String(first[2])] ? idx[0] + 1 : idx[0], 1, add.length, 10).setValues(add);
+      }
+      return json({ ok: true });
     }
     if (body.action === 'renameItem') {
       const code = String(body.code || ''), name = String(body.name || '').trim();
